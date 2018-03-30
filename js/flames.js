@@ -1,5 +1,11 @@
 "use strict";
-	
+
+// Sierpinski Triangle
+const affine0 = [0.5, 0, 0.433, 0.0, 0.5, -0.25];
+const affine1 = [0.5, 0,-0.433, 0.0, 0.5, -0.25];
+const affine2 = [0.5, 0, 0.0, 0.0, 0.5, 0.5];
+const affines = [affine0, affine1, affine2];
+
 function main() {
 	
 	// Get the WebGL canvas
@@ -30,12 +36,12 @@ function initProgram(gl) {
 		
 		'void main(void) {' +
 		'  vec2 pos = vec2(' +
-		'    aVertexPosition.x * uRotation.y + aVertexPosition.y * uRotation.x,' +
-		'    aVertexPosition.y * uRotation.y - aVertexPosition.x * uRotation.x);' +
+		'	aVertexPosition.x * uRotation.y + aVertexPosition.y * uRotation.x,' +
+		'	aVertexPosition.y * uRotation.y - aVertexPosition.x * uRotation.x);' +
 		'  gl_Position = vec4(pos * uScalingFactor, 0.0, 1.0);' +
 		'  gl_PointSize = 2.0;' +
 		'}';
-
+	
 	// Fragment shader source code
 	const fsSource =
 		'void main(void) {' +
@@ -66,8 +72,7 @@ function initProgramData(gl, programInfo) {
 	const NUM_VERTEXES = 100;
 	
 	const programData = {
-		vertexCount: NUM_VERTEXES,
-		vertexArray: initVertexes(gl, programInfo, NUM_VERTEXES),
+		vertexes: initVertexes(gl, programInfo, NUM_VERTEXES),
 	};
 	
 	/*
@@ -99,25 +104,38 @@ function initProgramData(gl, programInfo) {
 function initVertexes(gl, programInfo, vertexCount) {
 	
 	// Fill an array with vertexes in the unit square
-	var vertexArray = new Array(vertexCount*2);
+	const vertexArray = new Float32Array(vertexCount*2);
 	for (let v = 0; v < vertexArray.length; v++) {
 		vertexArray[v] = Math.random()*2.0 - 1.0;
 	}
 
 	// Create an empty buffer object to store the vertex buffer
-	var vertexBuffer = gl.createBuffer();
+	const vertexBuffer = gl.createBuffer();
 
 	// Bind appropriate array buffer to it
 	gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
-
+	
 	// Pass the vertex data to the buffer
-	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertexArray), gl.STATIC_DRAW);
+	gl.bufferData(gl.ARRAY_BUFFER, vertexArray, gl.STATIC_DRAW);
 
-	// Point an attribute to the currently bound VBO
+	// Point the attribute to the currently bound VBO
 	gl.vertexAttribPointer(programInfo.aVertexPosition, 2, gl.FLOAT, false, 0, 0);
-
+	
 	// Enable the attribute
 	gl.enableVertexAttribArray(programInfo.aVertexPosition);
+	
+	// Unbind the buffer
+	gl.bindBuffer(gl.ARRAY_BUFFER, null);
+
+	// Group the array and the buffer
+	const vertexes = {
+		count: vertexCount,
+		array: vertexArray,
+		buffer: vertexBuffer,
+		shaderLocation: programInfo.aVertexPosition,
+	};
+	
+	return vertexes;
 }
 
 function animate(canvas, gl, programInfo, programData, prevTime, currTime) {
@@ -140,12 +158,34 @@ function animate(canvas, gl, programInfo, programData, prevTime, currTime) {
 	const scaleY = aspectRatio < 1.0 ? aspectRatio : 1.0;
 	gl.uniform2fv(programInfo.uScalingFactor, [scaleX, scaleY]);
 	
+	// Monte Carlo iteration (iterative function loop)
+	const vertexCount = programData.vertexes.count;
+	const vertexArray = programData.vertexes.array;
+	for (let v = 0; v < vertexCount; v++) {
+		const affineIdx = Math.floor(Math.random()*3);
+		const affine = affines[affineIdx];
+		const x0 = vertexArray[v*2+0];
+		const y0 = vertexArray[v*2+1];
+		const x1 = affine0[0] * x0 + affine[1] * y0 + affine[2];
+		const y1 = affine0[3] * x0 + affine[4] * y0 + affine[5];
+		vertexArray[v*2+0] = x1;
+		vertexArray[v*2+1] = y1;
+	}
+
+	// Pass the vertex data to the buffer
+	gl.bindBuffer(gl.ARRAY_BUFFER, programData.vertexes.buffer);
+	// Pass the vertex data to the buffer
+	gl.bufferData(gl.ARRAY_BUFFER, vertexArray, gl.STATIC_DRAW);
+	// Unbind the buffer
+	gl.bindBuffer(gl.ARRAY_BUFFER, null);
+	
+	
 	// Make the points rotate
 	let angle = (currTime / 1000.0) * (Math.PI / 2.0);
 	gl.uniform2fv(programInfo.uRotation, [Math.sin(angle), Math.cos(angle)]);
 	
 	// Draw the triangle
-	gl.drawArrays(gl.POINTS, 0, programData.vertexCount);
+	gl.drawArrays(gl.POINTS, 0, programData.vertexes.count);
 	
 	// Loop
 	window.requestAnimationFrame(function(nextTime) {
