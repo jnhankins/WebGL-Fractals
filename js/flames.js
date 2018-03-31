@@ -1,5 +1,6 @@
 "use strict";
 
+const VERTEX_COUNT = 10000;
 
 // Sierpinski Triangle
 const affine0 = [0.5, 0, 0.433, 0.0, 0.5, -0.25];
@@ -18,6 +19,7 @@ function main() {
 
 	// Initialize the program
 	const programInfo = {
+		fadeOutProgram: initFadeOutProgram(gl),
 		fboProgram: initFboProgram(gl),
 		canvasProgram: initCanvasProgram(gl),
 	}
@@ -30,8 +32,7 @@ function main() {
 	});
 }
 
-
-function initFboProgram(gl) {
+function initFadeOutProgram(gl) {
 	
 	// Frame buffer vertex shader source code
 	const vsSource =
@@ -45,8 +46,12 @@ function initFboProgram(gl) {
 	
 	// Frame buffer fragment shader source code
 	const fsSource =
+		'precision mediump float;' +
+		
+		'uniform vec4 u_color;' +
+		
 		'void main(void) {' +
-		'  gl_FragColor = vec4(0.0, 0.0, 1.0, 1.0);' +
+		'  gl_FragColor = u_color;' +
 		'}';
 	
 	// Create the shader program
@@ -57,6 +62,44 @@ function initFboProgram(gl) {
 		program: shaderProgram,
 		aPositionLocation: gl.getAttribLocation(shaderProgram, 'a_position'),
 		uScalingLocation: gl.getUniformLocation(shaderProgram, 'u_scaling'),
+		uColorLocation: gl.getUniformLocation(shaderProgram, 'u_color'),
+	};
+	
+	return programInfo;
+}
+
+function initFboProgram(gl) {
+	
+	// Frame buffer vertex shader source code
+	const vsSource =
+		'attribute vec2 a_position;' +
+
+		'uniform vec2 u_scaling;' +
+		'uniform vec2 u_rotate;' +
+		
+		'void main(void) {' +
+		'  vec2 pos = vec2(' +
+		'    a_position.x * u_rotate.y + a_position.y * u_rotate.x,' +
+		'    a_position.y * u_rotate.y - a_position.x * u_rotate.x);' +
+		'  gl_Position = vec4(pos * u_scaling, 0.0, 1.0);' +
+		'  gl_PointSize = 1.0;' +
+		'}';
+	
+	// Frame buffer fragment shader source code
+	const fsSource =
+		'void main(void) {' +
+		'  gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);' +
+		'}';
+	
+	// Create the shader program
+	const shaderProgram = buildShaderProgram(gl, vsSource, fsSource);
+	
+	// Bundle
+	const programInfo = {
+		program: shaderProgram,
+		aPositionLocation: gl.getAttribLocation(shaderProgram, 'a_position'),
+		uScalingLocation: gl.getUniformLocation(shaderProgram, 'u_scaling'),
+		uRotateLocation: gl.getUniformLocation(shaderProgram, 'u_rotate'),
 	};
 	
 	return programInfo;
@@ -84,7 +127,7 @@ function initCanvasProgram(gl) {
 		'uniform sampler2D u_texture;' +
 		
 		'void main() {' +
-		'   gl_FragColor = texture2D(u_texture, v_texcoord);' +
+		'  gl_FragColor = texture2D(u_texture, v_texcoord);' +
 		'}';
 	
 	const shaderProgram = buildShaderProgram(gl, vsSource, fsSource);
@@ -264,7 +307,7 @@ function initFrameBuffer(gl, quadTexture) {
 function initPointsCoords(gl) {
 	
 	// Constant number of points
-	const vertexCount = 10000;
+	const vertexCount = VERTEX_COUNT;
 	
 	// Fill an array with points in the unit square
 	const vertexArray = new Float32Array(vertexCount*2);
@@ -290,6 +333,8 @@ function initPointsCoords(gl) {
 
 function animate(canvas, gl, programInfo, programData, prevTime, currTime) {
 	
+	renderFadeOut(canvas, gl, programInfo.fadeOutProgram, programData, prevTime, currTime);
+
 	renderTexture(canvas, gl, programInfo.fboProgram, programData, prevTime, currTime);
 	
 	renderCanvas(canvas, gl, programInfo.canvasProgram, programData, prevTime, currTime);
@@ -300,8 +345,69 @@ function animate(canvas, gl, programInfo, programData, prevTime, currTime) {
 	});
 }
 
-var n = 0;
+function renderFadeOut(canvas, gl, programInfo, programData, prevTime, currTime) {
 
+	const fadeOutTimeMs = 1000;
+	const fadeOutAmount = 0.999;
+	const fadeOutRate = 1.0 - Math.pow(1.0 - fadeOutAmount, (currTime - prevTime)/fadeOutTimeMs);
+
+	// Switch the render output location to the FBO
+	gl.bindFramebuffer(gl.FRAMEBUFFER, programData.frameBuffer);
+
+	// Clear the color buffer bit
+	gl.clear(gl.DEPTH_BUFFER_BIT);
+	
+	// Required for some reason
+	gl.disable(gl.DEPTH_TEST);
+
+	// Enable blending
+	gl.enable(gl.BLEND);
+
+	// Blend function
+	//gl.blendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA);
+	//gl.blendFunc(gl.GL_ONE, gl.GL_ONE_MINUS_SRC_COLOR);
+gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+	
+	// Set the shader program
+	gl.useProgram(programInfo.program);
+	
+	// Set the view port
+	gl.viewport(0, 0, 1024, 1024);
+
+	// Update the aspect ratio
+	const aspectRatio = glCanvas.width / glCanvas.height;
+	const scaleX = aspectRatio < 1.0 ? 1.0/aspectRatio : 1.0;
+	const scaleY = aspectRatio > 1.0 ? aspectRatio : 1.0;
+	gl.uniform2fv(programInfo.uScalingLocation, [scaleX, scaleY]);
+
+	// Set the fade out color
+	gl.uniform4fv(programInfo.uColorLocation, new Float32Array([0.0, 0.0, 0.0, fadeOutRate]));
+
+	// Turn on the position attribute
+	gl.enableVertexAttribArray(programInfo.aPositionLocation);
+
+	// Bind the position buffer.
+	gl.bindBuffer(gl.ARRAY_BUFFER, programData.positionBuffer);
+
+	// Tell the position attribute how to get data out of positionBuffer (ARRAY_BUFFER)
+	gl.vertexAttribPointer(programInfo.aPositionLocation, 2, gl.FLOAT, false, 0, 0);
+
+	// Draw the triangle
+	gl.drawArrays(gl.TRIANGLES, 0, 6);
+	
+	// Generate a mipmap for the rendered texture
+	gl.bindTexture(gl.TEXTURE_2D, programData.texture);
+	gl.generateMipmap(gl.TEXTURE_2D);
+	gl.bindTexture(gl.TEXTURE_2D, null);
+
+	// Switch the render output location back to the canvas
+	gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+	// Required for some reason
+	gl.disable(gl.BLEND);
+}
+
+var n = 0;
 function renderTexture(canvas, gl, programInfo, programData, prevTime, currTime) {
 	n += programData.points.vertexCount;
 	console.log((n/(currTime/1000)) + ' pts per second');
@@ -309,11 +415,8 @@ function renderTexture(canvas, gl, programInfo, programData, prevTime, currTime)
 	// Switch the render output location to the FBO
 	gl.bindFramebuffer(gl.FRAMEBUFFER, programData.frameBuffer);
 	
-	// Clear the canvas
-	//gl.clearColor(0.0, 1.0, 0.0, 1.0);
-	
 	// Clear the color buffer bit
-	//gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+	gl.clear(gl.DEPTH_BUFFER_BIT);
 	
 	// Required for some reason
 	gl.enable(gl.DEPTH_TEST);
@@ -324,11 +427,18 @@ function renderTexture(canvas, gl, programInfo, programData, prevTime, currTime)
 	// Set the view port
 	gl.viewport(0, 0, 1024, 1024);
 	
+
 	// Update the aspect ratio
 	const aspectRatio = glCanvas.width / glCanvas.height;
 	const scaleX = aspectRatio < 1.0 ? 1.0/aspectRatio : 1.0;
 	const scaleY = aspectRatio > 1.0 ? aspectRatio : 1.0;
+	gl.enableVertexAttribArray(programInfo.uScalingLocation);
 	gl.uniform2fv(programInfo.uScalingLocation, [scaleX, scaleY]);
+
+	// Rotate everything until we have better animation
+	const angle = (currTime / 1000.0) * (Math.PI / 2.0);
+	gl.enableVertexAttribArray(programInfo.uRotateLocation);
+	gl.uniform2fv(programInfo.uRotateLocation, [Math.sin(angle), Math.cos(angle)]);
 	
 	// Monte Carlo iteration (iterative function loop)
 	const vertexCount = programData.points.vertexCount;
@@ -338,8 +448,8 @@ function renderTexture(canvas, gl, programInfo, programData, prevTime, currTime)
 		const affine = affines[affineIdx];
 		const x0 = vertexArray[v*2+0];
 		const y0 = vertexArray[v*2+1];
-		const x1 = affine0[0] * x0 + affine[1] * y0 + affine[2];
-		const y1 = affine0[3] * x0 + affine[4] * y0 + affine[5];
+		const x1 = affine[0] * x0 + affine[1] * y0 + affine[2];
+		const y1 = affine[3] * x0 + affine[4] * y0 + affine[5];
 		vertexArray[v*2+0] = x1;
 		vertexArray[v*2+1] = y1;
 	}
